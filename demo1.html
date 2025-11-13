@@ -971,7 +971,7 @@
       }
 
       try {
-        const res = await fetch('http://localhost:3000/getExperiments?username=' + encodeURIComponent(username));
+        const res = await fetch(`${BASE_URL}/getExperiments?username=` + encodeURIComponent(username));
         const data = await res.json();
         if (!data.success) {
           console.warn('拉取实验记录失败', data);
@@ -1580,3 +1580,4 @@
 
 
 </html>
+
