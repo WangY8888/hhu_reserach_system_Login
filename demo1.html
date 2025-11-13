@@ -925,230 +925,378 @@
             }
         });
 
-/* ====== 实验记录：保存 + 页面即时渲染（替换原 saveExperiment / oldSaveExperiment） ====== */
-async function saveExperiment(evt) {
-  if (evt && evt.preventDefault) evt.preventDefault();
+        /* ====== 实验记录保存（与后端交互）
+           说明：将实验数据 POST 到本地开发接口 /addExperiment；保存成功时会刷新历史列表。
+        */
+        function saveExperiment() {
+            const expName = document.getElementById('expName').value;
+            const expDate = document.getElementById('expDate').value;
+            const expData = document.getElementById('expData').value;
+            const expNote = document.getElementById('expNote').value;
 
-  const expName = document.getElementById('expName').value.trim();
-  const expDate = document.getElementById('expDate').value;
-  const expData = document.getElementById('expData').value.trim();
-  const expNote = document.getElementById('expNote').value.trim();
-  const username = sessionStorage.getItem('username') || localStorage.getItem('username');
+            const username = sessionStorage.getItem('username');
+            if (!username) {
+                showMessage('未检测到登录用户，请先登录', 'error');
+                return;
+            }
 
-  if (!username) { showMessage('未检测到登录用户，请先登录', 'error'); return; }
-  if (!expName) { showMessage('请填写实验名称', 'error'); return; }
+            showMessage('正在保存实验记录...', 'info');
 
-  showMessage('正在保存实验记录...', 'info');
+            fetch(`${BASE_URL}/addExperiment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, expName, expDate, expData, expNote })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showMessage('实验记录保存成功！（ID: ' + data.experimentId + '）', 'success');
+                        document.getElementById('addExperimentForm').reset();
+                        document.querySelectorAll('.card').forEach(c => c.style.display = 'block');
+                        document.getElementById('newcard1').style.display = 'none';
+                        document.querySelector('.calendar-log-container').style.display = 'flex';
+                        // 刷新历史列表（如果需要）
+                        setTimeout(loadExperimentList, 200);
+                    } else {
+                        console.error(data);
+                        showMessage('实验记录保存失败：' + (data.reason || data.error || 'unknown'), 'error');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    showMessage('保存出错，请查看控制台', 'error');
+                });
+        }
 
-  try {
-    const res = await fetch(`${BASE_URL}/addExperiment`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, expName, expDate, expData, expNote })
-    });
-    const data = await res.json();
 
-    if (data && data.success) {
-      showMessage('实验记录保存成功！', 'success');
+        // ====== 实验历史：拉取并渲染到弹窗内（最近记录优先显示） ======
+        async function loadExperimentList() {
+            const username = sessionStorage.getItem('username') || localStorage.getItem('username');
+            if (!username) {
+                return;
+            }
 
-      // 立即在 UI 上渲染一条临时记录，id 用 temp 前缀标识
-      const tempRecord = {
-        id: (data.experimentId ? data.experimentId : ('temp-exp-' + Date.now())),
-        expName, expDate, expData, expNote,
-        created_at: new Date().toISOString()
-      };
-      prependExperimentToUI(tempRecord, { temp: true });
+            try {
+                const res = await fetch(`${BASE_URL}/getExperiments?username=` + encodeURIComponent(username));
+                const data = await res.json();
+                if (!data.success) {
+                    console.warn('拉取实验记录失败', data);
+                    return;
+                }
 
-      // 清表、隐藏弹窗、恢复主页卡片
-      document.getElementById('addExperimentForm').reset();
-      document.querySelectorAll('.card').forEach(c => c.style.display = 'block');
-      document.getElementById('newcard1').style.display = 'none';
-      document.querySelector('.calendar-log-container').style.display = 'flex';
+                renderExperimentHistory(data.data || []);
+            } catch (err) {
+                console.error('加载实验记录出错：', err);
+            }
+        }
 
-      // 异步刷新真实历史（会把服务器数据插入 / 覆盖）
-      setTimeout(loadExperimentList, 300);
-    } else {
-      showMessage('实验记录保存失败：' + (data && (data.error || data.reason) ? (data.error || data.reason) : '未知错误'), 'error');
-      console.error('addExperiment response', data);
-    }
-  } catch (err) {
-    console.error('saveExperiment error', err);
-    showMessage('保存出错，请查看控制台', 'error');
-  }
-}
+        function renderExperimentHistory(list) {
+            const containerId = 'experimentHistoryContainer';
+            let container = document.getElementById(containerId);
+            const parent = document.getElementById('newcard1');
+            if (!parent) return;
 
-// 在历史列表顶部插入单条实验记录（可临时）
-function prependExperimentToUI(item, options = { temp: false }) {
-  const parent = document.getElementById('newcard1');
-  if (!parent) return;
+            if (!container) {
+                container = document.createElement('div');
+                container.id = containerId;
+                container.style.width = '80%';
+                container.style.margin = '20px auto';
+                container.style.padding = '12px';
+                container.style.borderTop = '1px dashed #acc3e3';
+                container.style.textAlign = 'left';
+                container.style.color = '#033d94';
+                parent.appendChild(container);
+            }
 
-  // 找到或创建 container（renderExperimentHistory 使用同 id）
-  let container = document.getElementById('experimentHistoryContainer');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'experimentHistoryContainer';
-    container.style.width = '80%';
-    container.style.margin = '20px auto';
-    container.style.padding = '12px';
-    container.style.borderTop = '1px dashed #acc3e3';
-    container.style.textAlign = 'left';
-    container.style.color = '#033d94';
-    parent.appendChild(container);
-    // 放标题
-    container.innerHTML = '<h3 style="color:#0348b0;margin-bottom:8px;">历史实验记录（最近）</h3>';
-  }
+            container.innerHTML = '<h3 style="color:#0348b0;margin-bottom:8px;">历史实验记录（最近）</h3>';
 
-  // 创建条目
-  const entry = document.createElement('div');
-  entry.style.padding = '8px 0';
-  entry.style.borderBottom = '1px solid #eee';
-  if (item && item.id) entry.setAttribute('data-id', item.id);
-  if (options.temp) entry.setAttribute('data-temp', '1');
+            if (!list || list.length === 0) {
+                const p = document.createElement('p');
+                p.textContent = '暂无实验记录。';
+                p.style.color = '#666';
+                container.appendChild(p);
+                return;
+            }
 
-  const title = document.createElement('div');
-  title.style.fontWeight = '700';
-  title.style.marginBottom = '4px';
+            const maxShow = 10;
+            list.slice(0, maxShow).forEach(item => {
+                const entry = document.createElement('div');
+                entry.style.padding = '8px 0';
+                entry.style.borderBottom = '1px solid #eee';
 
-  let dateStr = '';
-  if (item.expDate) dateStr = ' ' + (item.expDate.includes('T') ? item.expDate.split('T')[0] : item.expDate);
-  else if (item.created_at) dateStr = ' ' + (item.created_at.includes('T') ? item.created_at.split('T')[0] : item.created_at);
+                const title = document.createElement('div');
+                title.style.fontWeight = '700';
+                title.style.marginBottom = '4px';
 
-  title.textContent = `${item.expName || '(无名称)'}${dateStr}`;
+                let dateStr = '';
+                if (item.expDate) {
+                    dateStr = ' ' + (item.expDate.includes('T') ? item.expDate.split('T')[0] : item.expDate);
+                } else if (item.created_at) {
+                    dateStr = ' ' + (item.created_at.includes('T') ? item.created_at.split('T')[0] : item.created_at);
+                }
 
-  const small = document.createElement('div');
-  small.style.fontSize = '13px';
-  small.style.color = '#333';
-  small.innerHTML = `
-    <div><strong>数据：</strong>${escapeHtml(item.expData || '-')}</div>
-    <div><strong>备注：</strong>${escapeHtml(item.expNote || '-')}</div>
-    <div style="margin-top:6px;"><strong>ID：</strong>${escapeHtml(String(item.id || '-'))}</div>
-    <div style="margin-top:6px;font-size:12px;color:#999"><em>${options.temp ? '（本地显示，稍后同步真实数据）' : ''}</em></div>
-  `;
+                title.textContent = `${item.expName || '(无名称)'}${dateStr}`;
 
-  entry.appendChild(title);
-  entry.appendChild(small);
+                const small = document.createElement('div');
+                small.style.fontSize = '13px';
+                small.style.color = '#333';
+                small.innerHTML = `\n      <div><strong>数据：</strong>${escapeHtml(item.expData || '-')}</div>\n      <div><strong>备注：</strong>${escapeHtml(item.expNote || '-')}</div>\n      <div style="margin-top:6px;"><strong>ID：</strong>${item.id}</div>\n    `;
 
-  // 插入到 container 标题后（位于最前面）
-  container.insertBefore(entry, container.children[1] || null);
-}
+                entry.appendChild(title);
+                entry.appendChild(small);
+                container.appendChild(entry);
+            });
 
-// 将表单 submit 绑定到新 saveExperiment（替换原绑定）
-const addExperimentForm = document.getElementById('addExperimentForm');
-if (addExperimentForm) {
-  addExperimentForm.removeEventListener && addExperimentForm.removeEventListener('submit', saveExperiment);
-  addExperimentForm.addEventListener('submit', saveExperiment);
-}
+            if (list.length > maxShow) {
+                const more = document.createElement('div');
+                more.style.textAlign = 'center';
+                more.style.marginTop = '8px';
+                more.innerHTML = `<small style="color:#666">... 共 ${list.length} 条历史（仅显示最近 ${maxShow} 条）</small>`;
+                container.appendChild(more);
+            }
+        }
 
-/* ====== 论文进度：保存 + 页面即时渲染（替换原 submitThesisProgress） ====== */
-async function submitThesisProgress(evt) {
-  if (evt && evt.preventDefault) evt.preventDefault();
+        // 打开 "添加实验记录" 时延迟拉取历史，以保证弹窗已显示
+        const cardFirst = document.querySelectorAll('.card')[0];
+        if (cardFirst) {
+            cardFirst.addEventListener('click', () => {
+                setTimeout(loadExperimentList, 120);
+            });
+        }
 
-  const username = sessionStorage.getItem('username') || localStorage.getItem('username');
-  if (!username) { showMessage('未检测到登录用户，请先登录', 'error'); return; }
+        // 覆写 saveExperiment，保持原有功能并在保存成功后刷新历史列表
+        const oldSaveExperiment = window.saveExperiment;
+        window.saveExperiment = async function () {
+            if (typeof oldSaveExperiment === 'function') {
+                const username = sessionStorage.getItem('username') || localStorage.getItem('username');
+                const expName = document.getElementById('expName')?.value || '';
+                const expDate = document.getElementById('expDate')?.value || '';
+                const expData = document.getElementById('expData')?.value || '';
+                const expNote = document.getElementById('expNote')?.value || '';
 
-  const progressSummary = document.getElementById('progressSummary').value.trim();
-  const completedItems = document.getElementById('completedTasks').value.trim();
-  const resultOutput = document.getElementById('output').value.trim();
-  const problemsEncountered = document.getElementById('issues').value.trim();
-  const nextPlan = document.getElementById('nextPlan').value.trim();
+                try {
+                    const res = await fetch(`${BASE_URL}/addExperiment`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, expName, expDate, expData, expNote })
+                    });
 
-  if (!progressSummary) { showMessage('请填写进度概述', 'error'); return; }
+                    const data = await res.json();
+                    if (data.success) {
+                        alert('实验记录保存成功！');
+                        // 保存成功后刷新历史列表
+                        await loadExperimentList();
+                    } else {
+                        alert('保存失败：' + (data.error || data.reason || '未知错误'));
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('请求出错');
+                }
+            }
+        };
 
-  showMessage('正在保存论文进度...', 'info');
+        const form = document.getElementById('addExperimentForm');
+        if (form) {
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                saveExperiment();
+            });
+        } else {
+            console.error('没找到表单 addExperimentForm');
+        }
 
-  try {
-    const payload = { username, progressSummary, completedItems, resultOutput, problemsEncountered, nextPlan };
-    const res = await fetch(`${BASE_URL}/saveProgress`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    });
-    const data = await res.json();
+        /* ====== 日历功能：渲染当前月份并支持翻月 ======
+           说明：渲染单月日历并将当天样式加上 .today 类。 */
+        const monthYear = document.getElementById("month-year");
+        const calendarBody = document.getElementById("calendar-body");
+        let today = new Date();
+        let currentMonth = today.getMonth();
+        let currentYear = today.getFullYear();
 
-    if (data && data.success) {
-      showMessage('进度保存成功', 'success');
+        function renderCalendar(month, year) {
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            monthYear.textContent = `${year}年 ${month + 1}月`;
 
-      // 临时渲染到页面
-      const tempRec = {
-        id: (data.progressId ? data.progressId : ('temp-progress-' + Date.now())),
-        progress_summary: progressSummary,
-        completed_items: completedItems,
-        result_output: resultOutput,
-        problems_encountered: problemsEncountered,
-        next_plan: nextPlan,
-        created_at: new Date().toISOString()
-      };
-      prependProgressToUI(tempRec, { temp: true });
+            calendarBody.innerHTML = "";
+            let date = 1;
 
-      // 清表、隐藏弹窗、恢复主页卡片
-      document.getElementById('progressForm').reset();
-      document.querySelectorAll('.card').forEach(c => c.style.display = 'block');
-      document.getElementById('newcard2').style.display = 'none';
-      document.querySelector('.calendar-log-container').style.display = 'flex';
+            for (let i = 0; i < 6; i++) {
+                let row = document.createElement("tr");
 
-      // 异步刷新真实历史
-      setTimeout(loadProgressList, 300);
-    } else {
-      showMessage('保存失败：' + (data && (data.error || data.reason) ? (data.error || data.reason) : '未知错误'), 'error');
-      console.error('saveProgress response', data);
-    }
-  } catch (err) {
-    console.error('submitThesisProgress error', err);
-    showMessage('提交出错，请查看控制台', 'error');
-  }
-}
+                for (let j = 0; j < 7; j++) {
+                    let cell = document.createElement("td");
 
-function prependProgressToUI(item, options = { temp: false }) {
-  const parent = document.getElementById('newcard2');
-  if (!parent) return;
+                    if (i === 0 && j < firstDay) {
+                        cell.textContent = "";
+                    } else if (date > daysInMonth) {
+                        cell.textContent = "";
+                    } else {
+                        cell.textContent = date;
+                        if (date === today.getDate() && month === today.getMonth() && year === today.getFullYear()) {
+                            cell.classList.add("today");
+                        }
+                        date++;
+                    }
 
-  let container = document.getElementById('progressHistoryContainer');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'progressHistoryContainer';
-    container.style.width = '80%';
-    container.style.margin = '20px auto';
-    container.style.padding = '12px';
-    container.style.borderTop = '1px dashed #acc3e3';
-    container.style.textAlign = 'left';
-    container.style.color = '#033d94';
-    parent.appendChild(container);
-    container.innerHTML = '<h3 style="color:#0348b0;margin-bottom:8px;">历史进度（最近）</h3>';
-  }
+                    row.appendChild(cell);
+                }
 
-  const entry = document.createElement('div');
-  entry.style.padding = '8px 0';
-  entry.style.borderBottom = '1px solid #eee';
-  if (item && item.id) entry.setAttribute('data-id', item.id);
-  if (options.temp) entry.setAttribute('data-temp', '1');
+                calendarBody.appendChild(row);
+            }
+        }
 
-  const title = document.createElement('div');
-  title.style.fontWeight = '700';
-  title.style.marginBottom = '4px';
-  const dateStr = item.created_at ? (' ' + (item.created_at.includes('T') ? item.created_at.split('T')[0] : item.created_at)) : '';
-  title.textContent = `${item.progress_summary || '(无概述)'}${dateStr}`;
+        document.getElementById("prev-month").addEventListener("click", () => {
+            currentMonth--;
+            if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            renderCalendar(currentMonth, currentYear);
+        });
 
-  const small = document.createElement('div');
-  small.style.fontSize = '13px';
-  small.style.color = '#333';
-  small.innerHTML = `
-    <div><strong>完成项：</strong>${escapeHtml(item.completed_items || '-')}</div>
-    <div><strong>结果：</strong>${escapeHtml(item.result_output || '-')}</div>
-    <div><strong>问题：</strong>${escapeHtml(item.problems_encountered || '-')}</div>
-    <div><strong>下阶段：</strong>${escapeHtml(item.next_plan || '-')}</div>
-    <div style="margin-top:6px;font-size:12px;color:#999"><em>${options.temp ? '（本地显示，稍后同步真实数据）' : ''}</em></div>
-  `;
+        document.getElementById("next-month").addEventListener("click", () => {
+            currentMonth++;
+            if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderCalendar(currentMonth, currentYear);
+        });
 
-  entry.appendChild(title);
-  entry.appendChild(small);
-  container.insertBefore(entry, container.children[1] || null);
-}
+        renderCalendar(currentMonth, currentYear);
 
-// 绑定 progress 表单
-const progressForm = document.getElementById('progressForm');
-if (progressForm) {
-  progressForm.removeEventListener && progressForm.removeEventListener('submit', submitThesisProgress);
-  progressForm.addEventListener('submit', submitThesisProgress);
-}
+        /* ====== 论文进度（提交与历史拉取）
+           说明：提交进度到 /saveProgress，拉取历史到弹窗内显示。 */
+        (function () {
+            const progressForm = document.getElementById('progressForm');
 
+            if (progressForm) {
+                progressForm.addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    submitThesisProgress();
+                });
+            }
+
+            async function submitThesisProgress() {
+                const username = sessionStorage.getItem('username') || localStorage.getItem('username');
+                if (!username) {
+                    alert('未检测到登录用户，请先登录');
+                    return;
+                }
+
+                const progressSummary = document.getElementById('progressSummary').value.trim();
+                const completedItems = document.getElementById('completedTasks').value.trim();
+                const resultOutput = document.getElementById('output').value.trim();
+                const problemsEncountered = document.getElementById('issues').value.trim();
+                const nextPlan = document.getElementById('nextPlan').value.trim();
+
+                if (!progressSummary) {
+                    alert('请填写进度概述');
+                    return;
+                }
+
+                const payload = {
+                    username,
+                    progressSummary,
+                    completedItems,
+                    resultOutput,
+                    problemsEncountered,
+                    nextPlan
+                };
+
+                try {
+                    const res = await fetch(`${BASE_URL}/saveProgress`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await res.json();
+                    if (data.success) {
+                        alert('进度保存成功（ID:' + data.progressId + '）');
+                        progressForm.reset();
+                        document.querySelectorAll('.card').forEach(c => c.style.display = 'block');
+                        document.getElementById('newcard2').style.display = 'none';
+                        loadProgressList();
+                    } else {
+                        alert('保存失败：' + (data.reason || data.error || 'unknown'));
+                    }
+                } catch (err) {
+                    console.error('提交进度出错：', err);
+                    alert('提交出错，请查看控制台');
+                }
+            }
+
+            async function loadProgressList() {
+                const username = sessionStorage.getItem('username') || localStorage.getItem('username');
+                if (!username) return;
+
+                try {
+                    const res = await fetch(`${BASE_URL}/getProgress?username=` + encodeURIComponent(username));
+                    const data = await res.json();
+                    if (!data.success) return;
+                    renderProgressHistory(data.data || []);
+                } catch (err) {
+                    console.error('拉取历史出错：', err);
+                }
+            }
+
+            function renderProgressHistory(list) {
+                const containerId = 'progressHistoryContainer';
+                let container = document.getElementById(containerId);
+                const parent = document.getElementById('newcard2');
+                if (!parent) return;
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = containerId;
+                    container.style.width = '80%';
+                    container.style.margin = '20px auto';
+                    container.style.padding = '12px';
+                    container.style.borderTop = '1px dashed #acc3e3';
+                    container.style.textAlign = 'left';
+                    container.style.color = '#033d94';
+                    parent.appendChild(container);
+                }
+
+                container.innerHTML = '<h3 style="color:#0348b0;margin-bottom:8px;">历史进度（最近）</h3>';
+
+                if (!list || list.length === 0) {
+                    const p = document.createElement('p'); p.textContent = '暂无历史进度。'; p.style.color = '#666'; container.appendChild(p); return;
+                }
+
+                const maxShow = 10;
+                list.slice(0, maxShow).forEach(item => {
+                    const entry = document.createElement('div');
+                    entry.style.padding = '8px 0';
+                    entry.style.borderBottom = '1px solid #eee';
+
+                    const title = document.createElement('div');
+                    title.style.fontWeight = '700';
+                    title.style.marginBottom = '4px';
+                    const dateStr = item.created_at ? (' ' + item.created_at.split('T')[0]) : '';
+                    title.textContent = `${item.progress_summary || '(无概述)'}${dateStr}`;
+
+                    const small = document.createElement('div');
+                    small.style.fontSize = '13px';
+                    small.style.color = '#333';
+                    small.innerHTML = `\n        <div><strong>完成项：</strong>${(item.completed_items || '-')}</div>\n        <div><strong>结果：</strong>${(item.result_output || '-')}</div>\n        <div><strong>问题：</strong>${(item.problems_encountered || '-')}</div>\n        <div><strong>下阶段：</strong>${(item.next_plan || '-')}</div>\n      `;
+
+                    entry.appendChild(title); entry.appendChild(small);
+                    container.appendChild(entry);
+                });
+
+                if (list.length > maxShow) {
+                    const more = document.createElement('div');
+                    more.style.textAlign = 'center';
+                    more.style.marginTop = '8px';
+                    more.innerHTML = `<small style="color:#666">... 共 ${list.length} 条历史（仅显示最近 ${maxShow} 条）</small>`;
+                    container.appendChild(more);
+                }
+            }
+
+            const cardSecond = document.querySelectorAll('.card')[1];
+            if (cardSecond) {
+                cardSecond.addEventListener('click', () => {
+                    setTimeout(loadProgressList, 120);
+                });
+            }
+        })();
 
         /* ====== 文献管理（保存与历史拉取）
            说明：去除文件上传相关 UI，当前以 JSON 形式提交文献元信息到 /addLiterature。
